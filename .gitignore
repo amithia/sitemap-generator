@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.state.json
+crawl-state.json
+sitemap.json
+sitemap.md
+sitemap.html
