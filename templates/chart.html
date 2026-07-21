@@ -1,0 +1,558 @@
+<title>Site Map Chart</title>
+<style>
+:root{
+  --bg:#FAF9F6; --card:#FFFFFF; --ink:#20232A; --muted:#6F6A5E;
+  --line:#D8D3C4; --wire:#C9C3B2; --accent:#A66A00; --accent-soft:#F3E6CB;
+  --gold-ink:#7A4E00; --nis:#8C5A00; --hover:#F5F1E6; --shadow:0 1px 3px rgba(60,50,20,.08);
+  --drop:#3E7C4F; --drop-soft:#E2F0E5;
+  --new:#2E6F9E; --new-soft:#E3EEF6;
+}
+/* deliberately light-only: the map is designed for the paper-light palette */
+:root[data-theme="dark"], :root[data-theme="light"]{
+  --bg:#FAF9F6; --card:#FFFFFF; --ink:#20232A; --muted:#6F6A5E;
+  --line:#D8D3C4; --wire:#C9C3B2; --accent:#A66A00; --accent-soft:#F3E6CB;
+  --gold-ink:#7A4E00; --nis:#8C5A00; --hover:#F5F1E6; --shadow:0 1px 3px rgba(60,50,20,.08);
+  --drop:#3E7C4F; --drop-soft:#E2F0E5;
+  --new:#2E6F9E; --new-soft:#E3EEF6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.45 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.top{max-width:1100px;margin:0 auto;padding:26px 20px 6px;display:flex;flex-wrap:wrap;
+  gap:14px;align-items:baseline;justify-content:space-between}
+.top h1{font-size:1.3rem;font-weight:650;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.top .meta{color:var(--muted);font-size:.84rem}
+.bar{max-width:1100px;margin:0 auto;padding:8px 20px 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bar button{padding:7px 12px;font:inherit;font-size:.82rem;color:var(--ink);cursor:pointer;
+  background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow)}
+.bar button:hover{background:var(--hover)}
+.bar button:focus-visible,.card:focus-visible,.more:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.bar button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--gold-ink);font-weight:600}
+.hiddenx{display:none !important}
+#status{font-size:.8rem;color:var(--gold-ink)}
+.legend{color:var(--muted);font-size:.78rem;margin-left:auto}
+.legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--nis);margin:0 5px 0 2px;vertical-align:baseline}
+.editnote{max-width:1100px;margin:0 auto;padding:0 20px 10px;color:var(--drop);font-size:.8rem}
+
+.viewport{overflow-x:auto;padding:8px 24px 28px;margin-bottom:14px}
+.viewport::-webkit-scrollbar{height:10px}
+.viewport::-webkit-scrollbar-track{background:var(--panelless,transparent)}
+.viewport::-webkit-scrollbar-thumb{background:var(--line);border-radius:99px;border:2px solid var(--bg)}
+.viewport::-webkit-scrollbar-thumb:hover{background:var(--wire)}
+.viewport{scrollbar-color:var(--line) transparent;scrollbar-width:thin}
+.maprow{display:flex;align-items:flex-start;min-width:max-content}
+.chart{min-width:max-content}
+
+.l1row{display:flex;align-items:flex-start;list-style:none;margin:0;padding:0}
+.l1row>li{position:relative;padding:22px 12px 0}
+.l1row>li::before,.l1row>li::after{content:"";position:absolute;top:0;height:2px;background:var(--wire);width:50%}
+.l1row>li::before{left:0}
+.l1row>li::after{right:0}
+.l1row>li:first-child::before{background:none}
+.l1row>li:last-child::after{background:none}
+.l1row>li>.stub{position:absolute;top:0;left:50%;width:2px;height:22px;background:var(--wire);transform:translateX(-1px)}
+
+.card{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);
+  border-radius:7px;padding:7px 11px;box-shadow:var(--shadow);cursor:default;max-width:280px}
+.card.haskids{cursor:pointer}
+.card.haskids:hover{background:var(--hover)}
+.seccard{border-top:3px solid var(--accent);font-weight:650;margin:0 auto;width:max-content;max-width:250px}
+.name{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.82rem;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.name a{color:inherit;text-decoration:none}
+.name a:hover{color:var(--gold-ink);text-decoration:underline}
+.cnt{font-size:.7rem;color:var(--gold-ink);background:var(--accent-soft);border-radius:99px;
+  padding:1px 7px;font-variant-numeric:tabular-nums;flex:none}
+.nisdot{width:8px;height:8px;border-radius:50%;background:var(--nis);flex:none}
+.lock{flex:none;font-size:.72rem;line-height:1}
+.caret{flex:none;color:var(--muted);font-size:.65rem;transition:transform .12s}
+@media (prefers-reduced-motion: reduce){.caret{transition:none}}
+.closed>.card .caret{transform:rotate(-90deg)}
+
+.branch{width:max-content;max-width:300px;margin:0 auto;padding-top:14px}
+.children{margin:6px 0 0 13px;padding-left:16px;border-left:2px solid var(--wire);
+  display:flex;flex-direction:column;gap:6px}
+.node{position:relative}
+.children>.node::before{content:"";position:absolute;top:14px;left:-16px;width:14px;height:2px;background:var(--wire)}
+.closed>.children{display:none}
+.more{align-self:flex-start;background:none;border:1px dashed var(--line);color:var(--muted);
+  font:inherit;font-size:.74rem;border-radius:6px;padding:3px 10px;cursor:pointer;margin-left:2px}
+.more:hover{color:var(--ink);background:var(--hover)}
+.extra.hiddenx{display:none}
+.card.newcard{border-left:3px solid var(--new);background:var(--new-soft)}
+.tag{font-size:.66rem;border-radius:99px;padding:1px 8px;flex:none;font-weight:600;letter-spacing:.02em}
+.tag.newtag{background:var(--new);color:#fff}
+.linkbtn{flex:none;font-size:.68rem;font-family:inherit;color:var(--muted);background:var(--hover);
+  border:1px solid var(--line);border-radius:99px;padding:1px 7px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:3px}
+.linkbtn:hover{color:var(--ink);border-color:var(--wire)}
+.card.panel-open{outline:2px solid var(--accent);outline-offset:1px}
+
+#linkpanel{position:fixed;top:0;right:0;height:100vh;width:360px;max-width:92vw;
+  background:var(--card);border-left:1px solid var(--line);box-shadow:-6px 0 24px rgba(30,25,10,.12);
+  z-index:60;display:flex;flex-direction:column;transform:translateX(100%);
+  transition:transform .22s ease}
+#linkpanel.open{transform:translateX(0)}
+@media (prefers-reduced-motion: reduce){#linkpanel{transition:none}}
+#linkpanel .lp-head{padding:16px 18px 12px;border-bottom:1px solid var(--line);flex:none}
+#linkpanel .lp-title{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.92rem;
+  font-weight:650;word-break:break-word;margin:0 0 4px}
+#linkpanel .lp-url{font-size:.72rem;color:var(--muted);word-break:break-all}
+#linkpanel .lp-url a{color:inherit}
+#linkpanel .lp-close{position:absolute;top:14px;right:14px;background:none;border:none;
+  font-size:1.1rem;color:var(--muted);cursor:pointer;line-height:1;padding:4px}
+#linkpanel .lp-close:hover{color:var(--ink)}
+#linkpanel .lp-summary{padding:10px 18px;font-size:.76rem;color:var(--muted);flex:none;
+  border-bottom:1px solid var(--line)}
+#linkpanel .lp-body{overflow-y:auto;padding:8px 0 20px;flex:1}
+#linkpanel h3{margin:14px 18px 6px;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted)}
+#linkpanel ul{list-style:none;margin:0;padding:0 10px}
+#linkpanel li{margin:0 0 2px}
+#linkpanel li a{display:block;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--ink);
+  font-size:.82rem;line-height:1.3}
+#linkpanel li a:hover{background:var(--hover)}
+#linkpanel li a .lp-href{display:block;font-size:.72rem;color:var(--muted);word-break:break-all;
+  margin-top:1px}
+#linkpanel li.ext a{color:var(--new-ink,var(--new))}
+#linkpanel li.ext a .lp-href{color:var(--new)}
+#linkpanel li.ext a::after{content:" ↗";font-size:.7em}
+#linkpanel .lp-empty{padding:16px 18px;color:var(--muted);font-size:.82rem}
+#linkbackdrop{position:fixed;inset:0;background:rgba(20,17,8,.15);z-index:59;
+  opacity:0;pointer-events:none;transition:opacity .2s ease}
+#linkbackdrop.open{opacity:1;pointer-events:auto}
+@media (prefers-reduced-motion: reduce){#linkbackdrop{transition:none}}
+
+.progresswrap{flex:1 1 160px;max-width:260px;height:8px;background:var(--accent-soft);
+  border-radius:99px;overflow:hidden}
+.progressbar{display:block;height:100%;width:0%;background:var(--accent);border-radius:99px;
+  transition:width .6s ease}
+@media (prefers-reduced-motion: reduce){.progressbar{transition:none}}
+
+/* standalone panel: last stop of the horizontal scroll, unconnected */
+.floaters{flex:none;width:250px;margin:22px 12px 0 36px;align-self:flex-start;
+  background:var(--card);border:1px solid var(--line);border-radius:8px;
+  box-shadow:var(--shadow);padding:14px 16px;max-height:420px;display:flex;flex-direction:column}
+.floaters ul{overflow-y:auto;padding-right:4px}
+.floaters ul::-webkit-scrollbar{width:8px}
+.floaters ul::-webkit-scrollbar-thumb{background:var(--line);border-radius:99px}
+.floaters ul{scrollbar-color:var(--line) transparent;scrollbar-width:thin}
+.floaters h2{margin:0 0 2px;font-size:.82rem;font-weight:650;letter-spacing:.05em;text-transform:uppercase}
+.floaters p{margin:0 0 10px;color:var(--muted);font-size:.74rem}
+.floaters ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.floaters li{display:flex;align-items:center;gap:7px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.8rem}
+.floaters a{color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.floaters a:hover{color:var(--gold-ink);text-decoration:underline}
+
+/* edit mode */
+body.editing .card{cursor:grab}
+body.editing .card:active{cursor:grabbing}
+.card.dragover,.floaters.dragover{outline:2px solid var(--drop);outline-offset:2px;
+  background:var(--drop-soft)}
+.card{position:relative;transition:transform .12s}
+@media (prefers-reduced-motion: reduce){.card{transition:none}}
+.card.ins-left,.card.ins-right,.card.ins-top,.card.ins-bottom{background:var(--card)}
+.card.ins-left::after,.card.ins-right::after,.card.ins-top::after,.card.ins-bottom::after{
+  content:"";position:absolute;background:var(--drop);border-radius:4px;
+  box-shadow:0 0 0 1px var(--bg),0 0 8px var(--drop);animation:inspulse .8s ease-in-out infinite}
+@media (prefers-reduced-motion: reduce){
+  .card.ins-left::after,.card.ins-right::after,.card.ins-top::after,.card.ins-bottom::after{animation:none}}
+@keyframes inspulse{0%,100%{opacity:1}50%{opacity:.45}}
+.card.ins-left::after{left:-13px;top:-6px;bottom:-6px;width:7px}
+.card.ins-right::after{right:-13px;top:-6px;bottom:-6px;width:7px}
+.card.ins-top::after{top:-11px;left:-6px;right:-6px;height:7px}
+.card.ins-bottom::after{bottom:-11px;left:-6px;right:-6px;height:7px}
+.card.ins-left{transform:translateX(8px)}
+.card.ins-right{transform:translateX(-8px)}
+.card.ins-top{transform:translateY(8px)}
+.card.ins-bottom{transform:translateY(-8px)}
+body.editing .name a{pointer-events:none}
+footer{max-width:1100px;margin:0 auto;padding:8px 20px 48px;color:var(--muted);font-size:.78rem}
+</style>
+
+<div class="top">
+  <h1 id="title">site map</h1>
+  <div class="meta" id="meta"></div>
+</div>
+<div class="bar">
+  <button id="exp1">Sections only</button>
+  <button id="exp2">Two levels</button>
+  <button id="expall">Expand everything</button>
+  <button id="recrawl" class="hiddenx">↻ Re-crawl site</button>
+  <button id="editmode">✎ Edit mode</button>
+  <button id="addpage" class="editonly hiddenx">+ New page</button>
+  <button id="dlhtml" class="editonly hiddenx">Download draft (HTML)</button>
+  <button id="dlmd" class="editonly hiddenx">Download draft (outline)</button>
+  <button id="resetdraft" class="editonly hiddenx">Reset draft</button>
+  <span id="status"></span>
+  <span id="progresswrap" class="hiddenx progresswrap">
+    <span id="progressbar" class="progressbar"></span>
+  </span>
+</div>
+<div class="editnote hiddenx" id="editnote">Edit mode: drag a card onto another card to move it (with all its sub-pages) under that page; drag onto a SIBLING’s edge (left/right for sections, top/bottom for pages in a list) to reorder without re-parenting; drop on the Standalone panel to detach. Moves never delete anything — a card always carries its whole subtree. “+ New page” adds a blue “planned” card you can drag anywhere. Your draft is a copy — the original map is untouched and comes back when you leave edit mode.</div>
+
+<div class="viewport">
+  <div class="chart">
+    <div class="maprow">
+      <ul class="l1row" id="row"></ul>
+      <aside class="floaters" id="floatpanel">
+        <h2>Standalone pages</h2>
+        <p>Top-level pages with nothing beneath them — kept out of the map for clarity.</p>
+        <ul id="floatlist"></ul>
+      </aside>
+    </div>
+  </div>
+</div>
+<footer>Branch counts include every page beneath a card. Long lists are folded behind “more” buttons; card titles link to the live pages. Scroll right past the last section for standalone pages. Click a page's link count to see every link found on it.</footer>
+
+<div id="linkbackdrop"></div>
+<aside id="linkpanel" aria-hidden="true">
+  <div class="lp-head">
+    <button class="lp-close" id="lpclose" aria-label="Close">✕</button>
+    <p class="lp-title" id="lptitle"></p>
+    <p class="lp-url" id="lpurl"></p>
+  </div>
+  <p class="lp-summary" id="lpsummary"></p>
+  <div class="lp-body" id="lpbody"></div>
+</aside>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const INITIAL_HTML = document.documentElement.outerHTML;
+let D = JSON.parse(document.getElementById('data').textContent);
+const MAXKIDS = 8;
+let model = null, wip = null, editing = false, idSeq = 0;
+const closedUrls = new Set();
+const byId = new Map();
+
+function baseOf(){ return (D.base || 'https://example.com').replace(/\/$/,''); }
+function hostOf(){ return baseOf().replace(/^https?:\/\//,''); }
+
+function buildModel(){
+  if (D.isDraft && D.tree) return D.tree;   // reopened draft: use the saved structure verbatim
+  const BASE = baseOf();
+  const nis = new Set(D.nis||[]), noidx = new Set(D.noindex||[]);
+  const root = {name:hostOf(), url:BASE, page:false, kids:new Map()};
+  const urls = (D.urls||[]).filter(u=>!/\/node\/\d+$/.test(u));
+  for (const u of urls){
+    const segs = u.replace(/^https?:\/\/[^/]+/,'').split('/').filter(Boolean);
+    let n = root, acc='';
+    for (const s of segs){
+      acc += '/'+s;
+      if (!n.kids.has(s)) n.kids.set(s,{name:s,url:BASE+acc,page:false,kids:new Map()});
+      n = n.kids.get(s);
+    }
+    n.page = true;
+  }
+  function plain(n){
+    return {name:n.name, url:n.url, page:n.page, nis:n.page&&nis.has(n.url),
+            noindex:noidx.has(n.url), isNew:false,
+            kids:[...n.kids.values()].map(plain)};
+  }
+  return plain(root);
+}
+function count(n){ let c=n.page?1:0; for(const k of n.kids) c+=count(k); n.total=c; return c; }
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function marks(n){
+  return (n.nis?'<span class="nisdot" title="not in XML sitemap"></span>':'')+
+         (n.noindex?'<span class="lock" title="noindex — asked to be hidden from search engines">🔒</span>':'');
+}
+function card(n,cls){
+  const kids = n.kids.length>0;
+  const label = n.url
+    ? `<a href="${n.url}" target="_blank" rel="noopener">${esc(n.name)}</a>`
+    : esc(n.name);
+  const linkCount = (D.links_out && D.links_out[n.url] || []).length;
+  const linkbtn = (!editing && linkCount)
+    ? `<button class="linkbtn" data-url="${esc(n.url)}" draggable="false" title="Links found on this page">🔗 ${linkCount}</button>`
+    : '';
+  return `<div class="card ${cls||''} ${kids?'haskids':''} ${n.isNew?'newcard':''}" data-id="${n.id}" `+
+    `${editing?'draggable="true"':''} ${kids?'tabindex="0" role="button" aria-expanded="true"':''}>`+
+    (kids?'<span class="caret">▾</span>':'')+marks(n)+
+    (n.isNew?'<span class="tag newtag">planned</span>':'')+
+    `<span class="name">${label}</span>`+
+    (kids?`<span class="cnt">${n.total}</span>`:'')+linkbtn+`</div>`;
+}
+function renderKids(n){
+  const entries = editing ? [...n.kids]
+    : [...n.kids].sort((a,b)=>(b.total-a.total)||a.name.localeCompare(b.name));
+  let html='<div class="children">', extra=0;
+  entries.forEach((v,i)=>{
+    const hide = i>=MAXKIDS;
+    if (hide) extra++;
+    html += `<div class="node ${hide?'extra hiddenx':''}" data-id="${v.id}">${card(v)}${v.kids.length?renderKids(v):''}</div>`;
+  });
+  if (extra) html += `<button class="more">show ${extra} more</button>`;
+  return html+'</div>';
+}
+function assignIds(n,parent){ n.id=idSeq++; n.parent=parent; byId.set(n.id,n); for(const k of n.kids) assignIds(k,n); }
+function current(){ return editing && wip ? wip : model; }
+
+function render(){
+  const t = current();
+  byId.clear(); idSeq=0; assignIds(t,null); count(t);
+  document.getElementById('title').textContent = hostOf()+' — site map';
+  document.getElementById('meta').textContent =
+    `${(D.urls||[]).length.toLocaleString()} URLs`;
+  const entries = editing ? [...t.kids] : [...t.kids].sort((a,b)=>b.total-a.total);
+  const secs = entries.filter(v=>v.kids.length>0);
+  const floaters = entries.filter(v=>!v.kids.length).sort((a,b)=>a.name.localeCompare(b.name));
+  document.getElementById('row').innerHTML = secs.map(v=>
+    `<li><span class="stub"></span><div class="branch"><div class="node" data-id="${v.id}">${card(v,'seccard')}${renderKids(v)}</div></div></li>`
+  ).join('');
+  document.getElementById('floatlist').innerHTML = floaters.map(v=>{
+    const label = v.url
+      ? `<a href="${v.url}" ${editing?'draggable="true"':''} target="_blank" rel="noopener">${esc(v.name)}</a>`
+      : `<span ${editing?'draggable="true"':''}>${esc(v.name)}</span>`;
+    return `<li data-id="${v.id}" class="${v.isNew?'newcard':''}">${marks(v)}${v.isNew?'<span class="tag newtag">planned</span>':''}${label}</li>`;
+  }).join('');
+  if (editing){
+    document.querySelectorAll('#floatlist li').forEach(li=>li.setAttribute('draggable','true'));
+  }
+  document.querySelectorAll('.node').forEach(el=>{
+    const n = byId.get(+el.dataset.id);
+    if (n && closedUrls.has(n.url) && el.querySelector(':scope > .card.haskids'))
+      el.classList.add('closed');
+  });
+}
+
+/* fold/unfold + show-more */
+document.body.addEventListener('click', e=>{
+  const lb = e.target.closest('.linkbtn');
+  if (lb){ e.stopPropagation(); openLinkPanel(lb.dataset.url); return; }
+  const more = e.target.closest('.more');
+  if (more){
+    more.parentElement.querySelectorAll(':scope > .extra').forEach(x=>x.classList.remove('hiddenx'));
+    more.remove(); return;
+  }
+  if (e.target.closest('a') && !editing) return;
+  const c = e.target.closest('.card.haskids');
+  if (c){
+    const node = c.parentElement;
+    node.classList.toggle('closed');
+    const n = byId.get(+node.dataset.id);
+    if (n) node.classList.contains('closed') ? closedUrls.add(n.url) : closedUrls.delete(n.url);
+    c.setAttribute('aria-expanded', String(!node.classList.contains('closed')));
+  }
+});
+
+/* ---- links-on-this-page side panel ---- */
+const linkPanel = document.getElementById('linkpanel'), linkBackdrop = document.getElementById('linkbackdrop');
+function closeLinkPanel(){
+  linkPanel.classList.remove('open'); linkPanel.setAttribute('aria-hidden','true');
+  linkBackdrop.classList.remove('open');
+  document.querySelectorAll('.card.panel-open').forEach(c=>c.classList.remove('panel-open'));
+}
+function openLinkPanel(url){
+  const items = (D.links_out && D.links_out[url]) || [];
+  const internal = items.filter(l=>!l.external), external = items.filter(l=>l.external);
+  document.getElementById('lptitle').textContent = url.replace(/^https?:\/\/[^/]+/,'') || '/';
+  document.getElementById('lpurl').innerHTML = `<a href="${url}" target="_blank" rel="noopener">${esc(url)}</a>`;
+  document.getElementById('lpsummary').textContent =
+    `${items.length} link${items.length===1?'':'s'} found — ${internal.length} on this site, ${external.length} leaving it`;
+  function list(entries, extraClass){
+    if (!entries.length) return '';
+    return `<ul>${entries.map(l=>{
+      const label = l.text || l.url.replace(/^https?:\/\//,'').replace(/^mailto:/,'').replace(/^tel:/,'');
+      return `<li class="${extraClass||''}"><a href="${l.url}" target="_blank" rel="noopener">${esc(label)}`+
+        `<span class="lp-href">${esc(l.url)}</span></a></li>`;
+    }).join('')}</ul>`;
+  }
+  const body = document.getElementById('lpbody');
+  if (!items.length){
+    body.innerHTML = '<p class="lp-empty">No links were found on this page.</p>';
+  } else {
+    body.innerHTML =
+      (internal.length ? `<h3>On this site (${internal.length})</h3>${list(internal)}` : '') +
+      (external.length ? `<h3>Leaving this site (${external.length})</h3>${list(external,'ext')}` : '');
+  }
+  document.querySelectorAll('.card.panel-open').forEach(c=>c.classList.remove('panel-open'));
+  document.querySelectorAll(`.linkbtn[data-url]`).forEach(b=>{
+    if (b.dataset.url === url) b.closest('.card').classList.add('panel-open');
+  });
+  linkPanel.classList.add('open'); linkPanel.setAttribute('aria-hidden','false');
+  linkBackdrop.classList.add('open');
+}
+document.getElementById('lpclose').onclick = closeLinkPanel;
+linkBackdrop.onclick = closeLinkPanel;
+document.addEventListener('keydown', e=>{ if (e.key==='Escape') closeLinkPanel(); });
+document.body.addEventListener('keydown', e=>{
+  if ((e.key==='Enter'||e.key===' ') && e.target.classList?.contains('haskids')){
+    e.preventDefault(); e.target.click();
+  }
+});
+function setDepth(maxOpen){
+  document.querySelectorAll('.node').forEach(n=>{
+    let d=0, p=n;
+    while ((p=p.parentElement.closest('.node'))) d++;
+    const c=n.querySelector(':scope > .card.haskids');
+    if (!c) return;
+    const closed = d>=maxOpen;
+    n.classList.toggle('closed', closed);
+    const node = byId.get(+n.dataset.id);
+    if (node) closed ? closedUrls.add(node.url) : closedUrls.delete(node.url);
+    c.setAttribute('aria-expanded', String(!closed));
+  });
+}
+document.getElementById('exp1').onclick = ()=>setDepth(0);
+document.getElementById('exp2').onclick = ()=>setDepth(1);
+document.getElementById('expall').onclick = ()=>setDepth(99);
+
+/* ---- edit mode: drag & drop on a working copy ---- */
+function clone(n){
+  const kids = [...n.kids].sort((a,b)=>(b.total-a.total)||a.name.localeCompare(b.name)).map(clone);
+  return {name:n.name,url:n.url,page:n.page,nis:n.nis,noindex:n.noindex,isNew:!!n.isNew,kids};
+}
+function isDescendant(anc, n){ while(n){ if(n===anc) return true; n=n.parent; } return false; }
+function moveNode(srcId, dstId, place){
+  const src = byId.get(srcId), dst = dstId==='panel' ? current() : byId.get(dstId);
+  if (!src || !dst || src===dst || isDescendant(src,dst)) return;
+  src.parent.kids = src.parent.kids.filter(k=>k!==src);
+  if (place && dst.parent){                      // reorder among siblings
+    const sibs = dst.parent.kids;
+    const i = sibs.indexOf(dst);
+    sibs.splice(place==='after' ? i+1 : i, 0, src);
+    src.parent = dst.parent;
+  } else {                                       // move under the target
+    dst.kids.push(src);
+    let a = dst;
+    while (a){ closedUrls.delete(a.url); a = a.parent; }
+  }
+  render();
+}
+function dropIntent(cardEl, e){
+  // same-parent targets get edge zones for reordering; the middle still nests
+  const dst = byId.get(+cardEl.dataset.id), src = byId.get(dragId);
+  if (!src || !dst || !dst.parent || src.parent !== dst.parent) return null;
+  const r = cardEl.getBoundingClientRect();
+  const horizontal = dst.parent === current();   // top-level sections sit in a row
+  if (horizontal){
+    if (e.clientX < r.left + r.width*0.35) return 'before';
+    if (e.clientX > r.right - r.width*0.35) return 'after';
+  } else {
+    if (e.clientY < r.top + r.height*0.35) return 'before';
+    if (e.clientY > r.bottom - r.height*0.35) return 'after';
+  }
+  return null;
+}
+function markIntent(cardEl, intent){
+  cardEl.classList.remove('dragover','ins-left','ins-right','ins-top','ins-bottom');
+  if (!intent){ cardEl.classList.add('dragover'); return; }
+  const horizontal = byId.get(+cardEl.dataset.id)?.parent === current();
+  cardEl.classList.add(intent==='before' ? (horizontal?'ins-left':'ins-top')
+                                         : (horizontal?'ins-right':'ins-bottom'));
+}
+let dragId = null;
+document.body.addEventListener('dragstart', e=>{
+  if (!editing) return;
+  const el = e.target.closest('[data-id]');
+  if (el){ dragId = +el.dataset.id; e.dataTransfer.effectAllowed='move'; }
+});
+document.body.addEventListener('dragover', e=>{
+  if (!editing || dragId===null) return;
+  const t = e.target.closest('.card,[id=floatpanel]');
+  if (t){
+    e.preventDefault();
+    if (t.classList.contains('card')) markIntent(t, dropIntent(t, e));
+    else t.classList.add('dragover');
+  }
+});
+document.body.addEventListener('dragleave', e=>{
+  const t = e.target.closest('.card,[id=floatpanel]');
+  if (t) t.classList.remove('dragover','ins-left','ins-right','ins-top','ins-bottom');
+});
+document.body.addEventListener('drop', e=>{
+  if (!editing || dragId===null) return;
+  e.preventDefault();
+  const panel = e.target.closest('#floatpanel');
+  const cardEl = e.target.closest('.card');
+  document.querySelectorAll('.dragover,.ins-left,.ins-right,.ins-top,.ins-bottom')
+    .forEach(x=>x.classList.remove('dragover','ins-left','ins-right','ins-top','ins-bottom'));
+  if (panel) moveNode(dragId,'panel');
+  else if (cardEl) moveNode(dragId, +cardEl.dataset.id, dropIntent(cardEl, e));
+  dragId = null;
+});
+document.getElementById('editmode').onclick = ()=>{
+  editing = !editing;
+  if (editing && !wip){ wip = clone(model); }
+  document.body.classList.toggle('editing', editing);
+  document.getElementById('editmode').classList.toggle('on', editing);
+  document.getElementById('editnote').classList.toggle('hiddenx', !editing);
+  document.querySelectorAll('.editonly').forEach(b=>b.classList.toggle('hiddenx', !editing));
+  render(); setDepth(1);
+};
+document.getElementById('resetdraft').onclick = ()=>{ wip = clone(model); render(); setDepth(1); };
+document.getElementById('addpage').onclick = ()=>{
+  const name = window.prompt('Name this new page (e.g. "Contact us"):');
+  if (!name || !name.trim()) return;
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'new-page';
+  current().kids.push({name:slug, url:'', page:true, nis:false, noindex:false, isNew:true, kids:[]});
+  render();
+  document.getElementById('floatpanel').scrollIntoView({behavior:'smooth', inline:'end', block:'nearest'});
+};
+function download(name, text, type){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text],{type}));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+function serialize(n){
+  return {name:n.name, url:n.url, page:!!n.page, children:n.kids.map(serialize)};
+}
+function fullSerialize(n){
+  return {name:n.name, url:n.url, page:!!n.page, nis:!!n.nis, noindex:!!n.noindex,
+          isNew:!!n.isNew, kids:n.kids.map(fullSerialize)};
+}
+document.getElementById('dlhtml').onclick = ()=>{
+  const draft = {base: baseOf(), isDraft: true, crawled_at: D.crawled_at || '',
+                 tree: fullSerialize(current())};
+  const json = JSON.stringify(draft).replace(/</g, '<');
+  const html = INITIAL_HTML.replace(
+    /(<script id="data" type="application\/json">)[\s\S]*?(<\/script>)/,
+    (_, open, close) => open + json + close
+  );
+  download('sitemap-draft.html', '<!doctype html>\n' + html, 'text/html');
+};
+document.getElementById('dlmd').onclick = ()=>{
+  const lines = [`# Draft sitemap for ${baseOf()}`,''];
+  (function walk(n,d){ for (const k of n.kids){
+    lines.push(`${'  '.repeat(d)}- ${k.name}`); walk(k,d+1); } })(current(),0);
+  download('sitemap-draft.md', lines.join('\n')+'\n', 'text/markdown');
+};
+
+/* ---- re-crawl (only when served by crawl_sitemap.py --serve) ---- */
+const rc = document.getElementById('recrawl'), statusEl = document.getElementById('status');
+fetch('api/status').then(r=>r.ok?r.json():Promise.reject()).then(()=>{
+  rc.classList.remove('hiddenx');
+}).catch(()=>{});
+const pwrap = document.getElementById('progresswrap'), pbar = document.getElementById('progressbar');
+rc.onclick = ()=>{
+  rc.disabled = true; statusEl.textContent = 'starting crawl…';
+  pwrap.classList.remove('hiddenx'); pbar.style.width = '2%';
+  fetch('api/recrawl',{method:'POST'}).then(()=>{
+    const poll = setInterval(()=>{
+      fetch('api/status').then(r=>r.json()).then(s=>{
+        if (s.running){
+          const total = s.pages + s.queue;
+          const pct = total ? Math.max(2, Math.round(100*s.pages/total)) : 2;
+          pbar.style.width = pct + '%';
+          statusEl.textContent = `crawling… ${s.pages} pages (${pct}%)`;
+        } else {
+          clearInterval(poll);
+          pbar.style.width = '100%';
+          fetch('api/data').then(r=>r.json()).then(d=>{
+            D = d; model = buildModel(); if (wip) wip = clone(model);
+            render(); setDepth(1);
+            statusEl.textContent = `updated — ${(D.urls||[]).length} URLs`;
+            rc.disabled = false;
+            setTimeout(()=>{ statusEl.textContent=''; pwrap.classList.add('hiddenx'); pbar.style.width='0%'; }, 6000);
+          });
+        }
+      }).catch(()=>{ clearInterval(poll); rc.disabled=false; statusEl.textContent='crawl status lost';
+        pwrap.classList.add('hiddenx'); });
+    }, 2000);
+  });
+};
+
+model = buildModel();
+render(); setDepth(1);
+</script>
