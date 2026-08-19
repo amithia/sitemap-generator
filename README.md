@@ -2,7 +2,16 @@
 
 Map any website and turn it into a real sitemap: an ASCII tree, a Markdown
 outline, or an interactive flowchart you can explore, reorganise, and export.
-Python standard library only — no `pip install`, just Python 3.10+.
+Python standard library only at runtime — no dependencies, just Python 3.10+.
+
+## Install
+
+```bash
+pipx install .   # or: pip install .
+sitemap-generator https://example.com
+```
+
+Running straight from a repo checkout without installing also works:
 
 ```bash
 python3 crawl_sitemap.py https://example.com

@@ -5,3 +5,7 @@ crawl-state.json
 sitemap.json
 sitemap.md
 sitemap.html
+*.egg-info/
+build/
+dist/
+.venv/
