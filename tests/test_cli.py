@@ -315,9 +315,13 @@ class _LocalServerTestCase(unittest.TestCase):
         cls.thread.start()
         cls.base = f"http://127.0.0.1:{cls.server.server_port}"
         cls.host = f"127.0.0.1:{cls.server.server_port}"
+        # These tests deliberately target loopback; opt out of the SSRF guard
+        # that otherwise refuses private/loopback addresses by default.
+        cli._ALLOW_PRIVATE_TARGETS = True
 
     @classmethod
     def tearDownClass(cls):
+        cli._ALLOW_PRIVATE_TARGETS = False
         cls.server.shutdown()
         cls.thread.join()
 
@@ -338,6 +342,7 @@ class EndToEndCrawlTests(_LocalServerTestCase):
             "mode": "crawl", "max_pages": 50, "max_depth": 6, "delay": 0.0, "workers": 2,
             "user_agent": "test-agent", "state": None, "fresh": False, "verify": False,
             "json": None, "markdown": None, "html": None, "serve": None,
+            "max_duration": None, "allow_private_ips": True,
         }
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
@@ -374,6 +379,44 @@ class EndToEndCrawlTests(_LocalServerTestCase):
         payload = cli.run_scan(self._args(mode="crawl", verify=True), self.base, self.host)
         self.assertEqual(payload["verify"]["unresolved_internal_links"], [])
         self.assertTrue(payload["verify"]["queue_exhausted"])
+
+    def test_max_duration_of_zero_stops_before_fetching_anything(self):
+        # The budget check runs before a worker dequeues its first URL, so an
+        # already-expired budget deterministically crawls zero pages.
+        payload = cli.run_scan(self._args(mode="crawl", max_duration=0.0),
+                                self.base, self.host)
+        self.assertEqual(payload, {})
+
+    def test_generous_max_duration_completes_normally(self):
+        payload = cli.run_scan(self._args(mode="crawl", max_duration=30.0),
+                                self.base, self.host)
+        self.assertEqual(payload["count"], 5)
+
+
+class SSRFGuardTests(_LocalServerTestCase):
+    def test_is_public_host_classifies_known_ranges(self):
+        self.assertFalse(cli._is_public_host("127.0.0.1"))         # loopback
+        self.assertFalse(cli._is_public_host("10.0.0.5"))          # private
+        self.assertFalse(cli._is_public_host("169.254.169.254"))   # link-local / cloud metadata
+        self.assertFalse(cli._is_public_host("::1"))               # loopback (IPv6)
+        self.assertTrue(cli._is_public_host("8.8.8.8"))
+
+    def test_unresolvable_host_is_treated_as_unsafe(self):
+        self.assertFalse(cli._is_public_host("this-host-does-not-resolve.invalid"))
+
+    def test_fetch_refuses_private_target_by_default(self):
+        cli._ALLOW_PRIVATE_TARGETS = False
+        try:
+            data, status, _headers, _final = cli.fetch(f"{self.base}/", "test-agent")
+        finally:
+            cli._ALLOW_PRIVATE_TARGETS = True  # restore the class-level opt-in
+        self.assertIsNone(data)
+        self.assertEqual(status, 0)
+
+    def test_fetch_allows_private_target_with_opt_in(self):
+        data, status, _headers, _final = cli.fetch(f"{self.base}/", "test-agent")
+        self.assertEqual(status, 200)
+        self.assertIsNotNone(data)
 
 
 if __name__ == "__main__":

@@ -33,10 +33,12 @@ import argparse
 import gzip
 import http.client
 import io
+import ipaddress
 import json
 import os
 import random
 import re
+import socket
 import sys
 import threading
 import time
@@ -59,9 +61,37 @@ SKIP_EXTENSIONS = re.compile(
 MAX_CONSECUTIVE_FAILURES = 15  # abort threshold: the site is probably blocking us
 FETCH_RETRIES = 3
 
+# Set from --allow-private-ips before any fetching starts (see run_scan()).
+# Left False by default so a crawl (or a redirect hit mid-crawl) can't be
+# steered at internal infrastructure or a cloud metadata endpoint.
+_ALLOW_PRIVATE_TARGETS = False
+
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
+
+
+def _is_proxied(scheme: str, host: str) -> bool:
+    proxy = urllib.request.getproxies().get(scheme)
+    return bool(proxy) and not urllib.request.proxy_bypass(host)
+
+
+def _is_unsafe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (ip.is_private or ip.is_loopback or ip.is_link_local or
+            ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+
+def _is_public_host(hostname: str) -> bool:
+    """True only if every address `hostname` resolves to is a routable
+    public address. Checked before every connection attempt (including
+    each redirect hop) so a crawl can't be steered — deliberately by a
+    malicious page's redirect, or by accident — at private/loopback/
+    link-local ranges or a cloud metadata endpoint."""
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False
+    return not any(_is_unsafe_ip(ipaddress.ip_address(info[4][0])) for info in infos)
 
 
 _conns = threading.local()  # per-thread keep-alive connection pool
@@ -69,8 +99,8 @@ _conns = threading.local()  # per-thread keep-alive connection pool
 
 def _connect(scheme: str, host: str, timeout: float) -> http.client.HTTPConnection:
     """Open a connection to host, tunnelling through an env-configured proxy."""
-    proxy = urllib.request.getproxies().get(scheme)
-    if proxy and not urllib.request.proxy_bypass(host):
+    if _is_proxied(scheme, host):
+        proxy = urllib.request.getproxies()[scheme]
         pp = urllib.parse.urlsplit(proxy)
         if scheme == "https":
             conn = http.client.HTTPSConnection(pp.hostname, pp.port or 3128, timeout=timeout)
@@ -126,6 +156,16 @@ def fetch(url: str, user_agent: str, cond: dict[str, str] | None = None,
             for _redirect in range(5):
                 parts = urllib.parse.urlsplit(target)
                 scheme, host = parts.scheme, parts.netloc
+                # Skip the address check when routed through a configured proxy:
+                # we're not the one resolving DNS or making the raw connection,
+                # so a local address check here wouldn't reflect where the
+                # request actually lands — that boundary is the proxy's to guard.
+                if (not _ALLOW_PRIVATE_TARGETS and not _is_proxied(scheme, host)
+                        and not _is_public_host(parts.hostname or "")):
+                    log(f"  ! refusing to fetch {target}: host resolves to a "
+                        "private/internal address (use --allow-private-ips "
+                        "if this is intentional)")
+                    return None, 0, {}, target
                 conn = _get_conn(scheme, host, timeout)
                 path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
                 if getattr(conn, "_proxy_absolute", False):
@@ -390,7 +430,7 @@ class RateLimiter:
 
 def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
           max_pages: int, max_depth: int, delay: float, user_agent: str,
-          workers: int = 4) -> set[str]:
+          workers: int = 4, max_duration: float | None = None) -> set[str]:
     robots = urllib.robotparser.RobotFileParser()
     robots.set_url(urllib.parse.urljoin(base, "/robots.txt"))
     try:
@@ -422,6 +462,7 @@ def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
     consecutive_failures = 0
     unchanged = 0
     stop = False
+    start_time = time.monotonic()
 
     def worker() -> None:
         nonlocal in_flight, consecutive_failures, stop, unchanged
@@ -429,8 +470,14 @@ def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
             with work:
                 while not state.queue and in_flight and not stop:
                     work.wait()
+                timed_out = (max_duration is not None and
+                             time.monotonic() - start_time >= max_duration)
                 if stop or (not state.queue and not in_flight) or \
-                        len(state.found) >= max_pages:
+                        len(state.found) >= max_pages or timed_out:
+                    if timed_out and not stop:
+                        log(f"Aborting: reached --max-duration ({max_duration:.0f}s) "
+                            f"with {len(state.queue)} URLs still queued — raise "
+                            "--max-duration, or resume later with --state.")
                     stop = True
                     work.notify_all()
                     return
@@ -644,6 +691,9 @@ def log_verify_report(report: dict) -> None:
 
 def run_scan(args, base: str, host: str) -> dict:
     """Run the full sitemap+crawl pipeline and return the result payload."""
+    global _ALLOW_PRIVATE_TARGETS
+    _ALLOW_PRIVATE_TARGETS = getattr(args, "allow_private_ips", False)
+
     sitemap_urls: set[str] = set()
     if args.mode in ("auto", "sitemap", "hybrid"):
         log(f"Looking for XML sitemaps on {host}...")
@@ -661,7 +711,8 @@ def run_scan(args, base: str, host: str) -> dict:
             f"~{args.delay}s between requests)...")
         state = CrawlState(args.state, fresh=args.fresh)
         crawled = crawl(base, host, seeds, state, args.max_pages, args.max_depth,
-                        args.delay, args.user_agent, args.workers)
+                        args.delay, args.user_agent, args.workers,
+                        max_duration=getattr(args, "max_duration", None))
         noindex_urls = state.noindex
         page_links = state.page_links
         urls = crawled if args.mode == "crawl" else urls | crawled
@@ -773,6 +824,17 @@ def main() -> int:
                     help="concurrent fetch threads; the --delay rate limit is shared "
                          "across them, so this hides latency without hitting the site "
                          "harder (default: %(default)s)")
+    ap.add_argument("--max-duration", type=float, metavar="SECONDS",
+                    help="stop the crawl after this many seconds, regardless of "
+                         "--max-pages; a hard ceiling for unattended/scheduled runs "
+                         "(default: unlimited, same as before this flag existed)")
+    ap.add_argument("--allow-private-ips", action="store_true",
+                    help="allow crawling hosts that resolve to a private/loopback/"
+                         "link-local address (e.g. an internal staging site). By "
+                         "default these are refused, including as a redirect target "
+                         "encountered mid-crawl, to avoid SSRF footguns like a "
+                         "malicious page redirecting to localhost or a cloud "
+                         "metadata endpoint")
     ap.add_argument("--user-agent", default=DEFAULT_USER_AGENT,
                     help="identify yourself; include a contact email so site admins can "
                          "reach you instead of blocking you")
