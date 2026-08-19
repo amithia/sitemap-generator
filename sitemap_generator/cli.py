@@ -45,9 +45,9 @@ import urllib.parse
 import urllib.request
 import urllib.robotparser
 import xml.etree.ElementTree as ET
-from importlib import resources
 from collections import deque
 from html.parser import HTMLParser
+from importlib import resources
 
 DEFAULT_USER_AGENT = "sitemap-tree-crawler/1.1 (personal study tool; contact: set --user-agent)"
 COMMON_SITEMAP_PATHS = ["/sitemap.xml", "/sitemap_index.xml", "/sitemap/sitemap.xml"]
@@ -395,8 +395,11 @@ def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
     robots.set_url(urllib.parse.urljoin(base, "/robots.txt"))
     try:
         robots.read()
-    except Exception:
-        pass  # if robots.txt is unreadable, can_fetch defaults to allow
+    except Exception as exc:  # noqa: BLE001 — robotparser.read() can raise a wide
+        # range of urllib errors depending on platform/network failure; any of
+        # them means the same thing here: fall back to can_fetch()'s permissive
+        # default rather than aborting the crawl.
+        log(f"  ! couldn't read robots.txt, assuming allow: {exc}")
 
     crawl_delay = robots.crawl_delay(user_agent)
     if crawl_delay and crawl_delay > delay:
@@ -466,7 +469,10 @@ def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
                         links = parser.links
                         noindex = parser.noindex
                         out_links = outbound_links(final_url, parser.anchors, host)
-                    except Exception:
+                    except Exception as exc:  # noqa: BLE001 — real-world HTML can
+                        # trip stdlib's parser in unpredictable ways; one malformed
+                        # page should never abort the whole crawl.
+                        log(f"  ! couldn't parse HTML, skipping links: {final_url} ({exc})")
                         links = []
             with work:
                 in_flight -= 1
@@ -580,7 +586,7 @@ LANGUAGE_MIRROR_RE = re.compile(
     r"/(hi|vi|zh-hans|zh-hant|id|ms|ko|ja|th|km|ta|ne|si|bn|ur|ar|fr|de|es)(/|$)")
 
 
-def build_verify_report(urls: set[str], state: "CrawlState") -> dict:
+def build_verify_report(urls: set[str], state: CrawlState) -> dict:
     """Cross-check crawl completeness: is every discovered internal link
     accounted for by a crawled page, a robots.txt exclusion, or a logged
     fetch failure? Anything left over is a genuine, unexplained gap."""

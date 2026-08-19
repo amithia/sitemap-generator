@@ -12,6 +12,7 @@ import os
 import tempfile
 import threading
 import unittest
+from typing import ClassVar
 from unittest.mock import patch
 
 from sitemap_generator import cli
@@ -257,8 +258,8 @@ class CrawlStateRoundTripTests(unittest.TestCase):
 class _TestSiteHandler(http.server.BaseHTTPRequestHandler):
     """Serves a tiny fake site + robots.txt + sitemap.xml for end-to-end tests."""
 
-    redirects = {"/redirect": "/target"}
-    pages = {
+    redirects: ClassVar[dict[str, str]] = {"/redirect": "/target"}
+    pages: ClassVar[dict[str, str]] = {
         "/": '<a href="/apply">Apply</a> <a href="/programs">Programs</a>',
         "/apply": ('<a href="/apply/domestic">Domestic</a> '
                    '<a href="https://external.example/">Ext</a>'),
@@ -333,11 +334,11 @@ class EndToEndCrawlTests(_LocalServerTestCase):
     """Exercises auto/sitemap/crawl/hybrid modes against a real (local) HTTP server."""
 
     def _args(self, **overrides):
-        defaults = dict(
-            mode="crawl", max_pages=50, max_depth=6, delay=0.0, workers=2,
-            user_agent="test-agent", state=None, fresh=False, verify=False,
-            json=None, markdown=None, html=None, serve=None,
-        )
+        defaults = {
+            "mode": "crawl", "max_pages": 50, "max_depth": 6, "delay": 0.0, "workers": 2,
+            "user_agent": "test-agent", "state": None, "fresh": False, "verify": False,
+            "json": None, "markdown": None, "html": None, "serve": None,
+        }
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
 
