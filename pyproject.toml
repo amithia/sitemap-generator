@@ -12,6 +12,9 @@ license = { file = "LICENSE" }
 authors = [{ name = "Amithi Liyanagamage" }]
 dependencies = []
 
+[project.optional-dependencies]
+dev = ["ruff==0.16.3"]
+
 [project.urls]
 Homepage = "https://github.com/amithia/sitemap-generator"
 
@@ -23,3 +26,6 @@ include = ["sitemap_generator*"]
 
 [tool.setuptools.package-data]
 sitemap_generator = ["templates/*.html"]
+
+[tool.ruff]
+target-version = "py310"
