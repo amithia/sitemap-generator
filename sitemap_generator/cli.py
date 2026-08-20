@@ -51,6 +51,8 @@ from collections import deque
 from html.parser import HTMLParser
 from importlib import resources
 
+from sitemap_generator import __version__
+
 DEFAULT_USER_AGENT = "sitemap-tree-crawler/1.1 (personal study tool; contact: set --user-agent)"
 COMMON_SITEMAP_PATHS = ["/sitemap.xml", "/sitemap_index.xml", "/sitemap/sitemap.xml"]
 SKIP_EXTENSIONS = re.compile(
@@ -810,6 +812,7 @@ def serve_map(args, base: str, host: str, payload: dict, port: int) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Crawl a site and print its sitemap as a tree.")
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     ap.add_argument("base_url", help="site to map, e.g. https://example.com")
     ap.add_argument("--mode", choices=["auto", "sitemap", "crawl", "hybrid"], default="auto",
                     help="auto: sitemap with crawl fallback; sitemap: sitemap.xml only; "
