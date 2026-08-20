@@ -116,6 +116,36 @@ only` diff cross-references against the site's own `sitemap.xml` — two
 different sources of truth agreeing is stronger evidence than either
 alone.
 
+## Generating a corrected sitemap.xml
+
+`--sitemap-xml FILE` writes a standards-compliant `sitemap.xml` from the
+crawl results — useful when the site's own sitemap has drifted and you want
+a fresh one to publish. Pages carrying a `noindex` meta tag are left out:
+listing a page while telling search engines not to index it just wastes
+crawl budget and contradicts the tag.
+
+```bash
+python3 crawl_sitemap.py https://example.com --mode hybrid --sitemap-xml sitemap.xml
+```
+
+## Diffing crawls over time
+
+`--diff-against FILE` compares this crawl's URLs against a previous
+`--json` snapshot and reports what was added or removed since then — handy
+for a recurring crawl (weekly, in CI, wherever) that should flag when pages
+disappear or new ones show up.
+
+```bash
+# first run: save a snapshot
+python3 crawl_sitemap.py https://example.com --json snapshot.json
+
+# later: compare against it
+python3 crawl_sitemap.py https://example.com --diff-against snapshot.json --json snapshot.json
+```
+
+The diff (added/removed URLs, unchanged count) is also embedded in
+`--json` output under `"diff"`.
+
 ## Modes
 
 - `auto` (default): use sitemap.xml if it exists, otherwise crawl.

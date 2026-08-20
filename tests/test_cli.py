@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import http.server
+import json
 import os
 import tempfile
 import threading
@@ -85,6 +86,43 @@ class RenderMarkdownTests(unittest.TestCase):
         self.assertIn("# Sitemap for https://example.com", out)
         self.assertIn("- apply", out)
         self.assertIn("  - domestic", out)
+
+
+class RenderSitemapXmlTests(unittest.TestCase):
+    def test_lists_urls_with_lastmod_and_excludes_noindex(self):
+        payload = {
+            "urls": ["https://example.com/", "https://example.com/hidden"],
+            "noindex": ["https://example.com/hidden"],
+            "crawled_at": "2026-01-15",
+        }
+        xml = cli.render_sitemap_xml(payload)
+        self.assertIn("<loc>https://example.com/</loc>", xml)
+        self.assertIn("<lastmod>2026-01-15</lastmod>", xml)
+        self.assertNotIn("hidden", xml)
+        self.assertTrue(xml.startswith('<?xml version="1.0" encoding="UTF-8"?>'))
+        self.assertIn('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', xml)
+
+    def test_escapes_special_characters_in_urls(self):
+        payload = {"urls": ["https://example.com/a?x=1&y=2"], "noindex": []}
+        xml = cli.render_sitemap_xml(payload)
+        self.assertIn("<loc>https://example.com/a?x=1&amp;y=2</loc>", xml)
+
+
+class DiffCrawlsTests(unittest.TestCase):
+    def test_computes_added_removed_and_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = os.path.join(tmp, "old.json")
+            with open(old_path, "w", encoding="utf-8") as f:
+                json.dump({"crawled_at": "2026-01-01",
+                           "urls": ["https://example.com/a", "https://example.com/b"]}, f)
+            new_payload = {"crawled_at": "2026-02-01",
+                           "urls": ["https://example.com/b", "https://example.com/c"]}
+            diff = cli.diff_crawls(old_path, new_payload)
+        self.assertEqual(diff["added"], ["https://example.com/c"])
+        self.assertEqual(diff["removed"], ["https://example.com/a"])
+        self.assertEqual(diff["unchanged_count"], 1)
+        self.assertEqual(diff["old_crawled_at"], "2026-01-01")
+        self.assertEqual(diff["new_crawled_at"], "2026-02-01")
 
 
 class RenderHtmlTests(unittest.TestCase):
@@ -391,6 +429,19 @@ class EndToEndCrawlTests(_LocalServerTestCase):
         payload = cli.run_scan(self._args(mode="crawl", max_duration=30.0),
                                 self.base, self.host)
         self.assertEqual(payload["count"], 5)
+
+    def test_diff_against_wired_through_run_scan(self):
+        first = cli.run_scan(self._args(mode="crawl"), self.base, self.host)
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = os.path.join(tmp, "first.json")
+            with open(snapshot, "w", encoding="utf-8") as f:
+                json.dump(first, f)
+            second = cli.run_scan(self._args(mode="crawl", diff_against=snapshot),
+                                   self.base, self.host)
+        self.assertIn("diff", second)
+        self.assertEqual(second["diff"]["added"], [])
+        self.assertEqual(second["diff"]["removed"], [])
+        self.assertEqual(second["diff"]["unchanged_count"], second["count"])
 
 
 class SSRFGuardTests(_LocalServerTestCase):

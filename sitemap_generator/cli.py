@@ -50,6 +50,7 @@ import xml.etree.ElementTree as ET
 from collections import deque
 from html.parser import HTMLParser
 from importlib import resources
+from xml.sax.saxutils import escape as xml_escape
 
 from sitemap_generator import __version__
 
@@ -631,6 +632,36 @@ def render_markdown(tree: dict, root_label: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+SITEMAP_XML_URL_LIMIT = 50_000  # sitemaps.org protocol cap on URLs per file
+
+
+def render_sitemap_xml(payload: dict) -> str:
+    """Generate a corrected sitemap.xml from crawl results.
+
+    Pages flagged `noindex` are left out: listing a page in a sitemap while
+    telling search engines not to index it just wastes crawl budget and
+    contradicts the tag, so a "corrected" sitemap shouldn't carry them over
+    from whatever the site's own (possibly wrong) sitemap.xml said.
+    """
+    noindex = set(payload.get("noindex", []))
+    urls = sorted(u for u in payload["urls"] if u not in noindex)
+    if len(urls) > SITEMAP_XML_URL_LIMIT:
+        log(f"  ! {len(urls)} URLs exceeds the sitemaps.org limit of "
+            f"{SITEMAP_XML_URL_LIMIT} per file — split into a sitemap index "
+            "before publishing this")
+    lastmod = payload.get("crawled_at", "")
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for url in urls:
+        lines.append("  <url>")
+        lines.append(f"    <loc>{xml_escape(url)}</loc>")
+        if lastmod:
+            lines.append(f"    <lastmod>{lastmod}</lastmod>")
+        lines.append("  </url>")
+    lines.append("</urlset>")
+    return "\n".join(lines) + "\n"
+
+
 LANGUAGE_MIRROR_RE = re.compile(
     r"/(hi|vi|zh-hans|zh-hant|id|ms|ko|ja|th|km|ta|ne|si|bn|ur|ar|fr|de|es)(/|$)")
 
@@ -691,6 +722,37 @@ def log_verify_report(report: dict) -> None:
         log("No unexplained gaps: every internal link found during the crawl is accounted for.")
 
 
+def diff_crawls(old_json_path: str, new_payload: dict) -> dict:
+    """Compare this crawl's URLs against a previous --json snapshot, so
+    what changed since then (pages added, pages that disappeared) is
+    visible without eyeballing two file trees."""
+    with open(old_json_path, encoding="utf-8") as f:
+        old_payload = json.load(f)
+    old_urls = set(old_payload.get("urls", []))
+    new_urls = set(new_payload.get("urls", []))
+    return {
+        "old_crawled_at": old_payload.get("crawled_at"),
+        "new_crawled_at": new_payload.get("crawled_at"),
+        "added": sorted(new_urls - old_urls),
+        "removed": sorted(old_urls - new_urls),
+        "unchanged_count": len(old_urls & new_urls),
+    }
+
+
+def log_crawl_diff(diff: dict) -> None:
+    log(f"\n--- Diff: {diff['old_crawled_at']} -> {diff['new_crawled_at']} ---")
+    log(f"{len(diff['added'])} added, {len(diff['removed'])} removed, "
+        f"{diff['unchanged_count']} unchanged")
+    for u in diff["added"][:25]:
+        log(f"  + {u}")
+    if len(diff["added"]) > 25:
+        log(f"  ... and {len(diff['added']) - 25} more (see --json output under 'diff')")
+    for u in diff["removed"][:25]:
+        log(f"  - {u}")
+    if len(diff["removed"]) > 25:
+        log(f"  ... and {len(diff['removed']) - 25} more (see --json output under 'diff')")
+
+
 def run_scan(args, base: str, host: str) -> dict:
     """Run the full sitemap+crawl pipeline and return the result payload."""
     global _ALLOW_PRIVATE_TARGETS
@@ -736,6 +798,10 @@ def run_scan(args, base: str, host: str) -> dict:
     if verify_report is not None:
         payload["verify"] = verify_report
         log_verify_report(verify_report)
+    if getattr(args, "diff_against", None):
+        diff = diff_crawls(args.diff_against, payload)
+        payload["diff"] = diff
+        log_crawl_diff(diff)
     return payload
 
 
@@ -853,6 +919,12 @@ def main() -> int:
                          "logged fetch failure) and report anything left unexplained")
     ap.add_argument("--json", metavar="FILE", help="also write the tree + URL list as JSON")
     ap.add_argument("--markdown", metavar="FILE", help="also write the tree as a Markdown outline")
+    ap.add_argument("--sitemap-xml", metavar="FILE",
+                    help="also write a corrected sitemap.xml from the crawl results "
+                         "(noindex pages are left out)")
+    ap.add_argument("--diff-against", metavar="FILE",
+                    help="compare this crawl's URLs against a previous --json output "
+                         "and report what was added/removed since then")
     ap.add_argument("--html", metavar="FILE",
                     help="also write the interactive flowchart map as a standalone HTML file")
     ap.add_argument("--serve", nargs="?", type=int, const=8600, metavar="PORT",
@@ -892,6 +964,10 @@ def main() -> int:
         with open(args.markdown, "w", encoding="utf-8") as f:
             f.write(render_markdown(payload["tree"], base))
         log(f"Markdown written to {args.markdown}")
+    if args.sitemap_xml:
+        with open(args.sitemap_xml, "w", encoding="utf-8") as f:
+            f.write(render_sitemap_xml(payload))
+        log(f"sitemap.xml written to {args.sitemap_xml}")
     if args.html:
         with open(args.html, "w", encoding="utf-8") as f:
             f.write(render_html(payload))
