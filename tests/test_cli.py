@@ -7,7 +7,9 @@ run with `python3 -m unittest discover` (no pip installs needed).
 from __future__ import annotations
 
 import argparse
+import glob
 import http.server
+import importlib.util
 import json
 import os
 import tempfile
@@ -17,6 +19,22 @@ from typing import ClassVar
 from unittest.mock import patch
 
 from sitemap_generator import cli
+
+_PLAYWRIGHT_AVAILABLE = importlib.util.find_spec("playwright") is not None
+
+
+def _find_chromium_executable() -> str | None:
+    """Best-effort: locate a pre-installed Chromium binary via
+    PLAYWRIGHT_BROWSERS_PATH, for sandboxes where the pip-installed
+    `playwright` version doesn't match the pre-cached browser revision.
+    Returns None if nothing is found, in which case JSRenderer falls back
+    to Playwright's normal resolution (the common case after a plain
+    `playwright install chromium`)."""
+    browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if not browsers_path or not os.path.isdir(browsers_path):
+        return None
+    matches = glob.glob(os.path.join(browsers_path, "chromium-*", "chrome-linux", "chrome"))
+    return matches[0] if matches else None
 
 
 class NormalizeTests(unittest.TestCase):
@@ -307,6 +325,12 @@ class _TestSiteHandler(http.server.BaseHTTPRequestHandler):
         "/programs/cs": "Leaf page.",
         "/disallowed": "Listed in the sitemap but excluded by robots.txt.",
         "/target": "Landed.",
+        "/js-injected": (
+            "<html><body>"
+            "<script>document.body.innerHTML += "
+            "'<a href=\"/apply\">Apply</a>';</script>"
+            "</body></html>"
+        ),
         "/robots.txt": "User-agent: *\nDisallow: /disallowed\n",
         "/sitemap.xml": (
             '<?xml version="1.0"?>'
@@ -468,6 +492,52 @@ class SSRFGuardTests(_LocalServerTestCase):
         data, status, _headers, _final = cli.fetch(f"{self.base}/", "test-agent")
         self.assertEqual(status, 200)
         self.assertIsNotNone(data)
+
+
+@unittest.skipUnless(_PLAYWRIGHT_AVAILABLE,
+                      "playwright not installed (optional 'js' extra)")
+class JSRendererTests(_LocalServerTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.chromium_path = _find_chromium_executable()
+
+    def _renderer(self, wait_ms: int = 200) -> cli.JSRenderer:
+        return cli.JSRenderer("test-agent", executable_path=self.chromium_path,
+                               wait_ms=wait_ms)
+
+    def test_renders_javascript_injected_links(self):
+        renderer = self._renderer()
+        try:
+            data, status, _headers, final = renderer.fetch(f"{self.base}/js-injected")
+        finally:
+            renderer.close()
+        self.assertEqual(status, 200)
+        self.assertEqual(final, f"{self.base}/js-injected")
+        parser = cli.LinkExtractor()
+        parser.feed(data.decode("utf-8"))
+        self.assertEqual(parser.links, ["/apply"])
+
+    def test_plain_fetch_misses_the_same_javascript_injected_link(self):
+        # Establishes the actual value of --render-js: a raw HTTP fetch of
+        # the exact same page never executes the <script>, so the crawler's
+        # link extractor finds nothing — unlike the rendered version above.
+        data, status, _headers, _final = cli.fetch(f"{self.base}/js-injected", "test-agent")
+        self.assertEqual(status, 200)
+        parser = cli.LinkExtractor()
+        parser.feed(data.decode("utf-8"))
+        self.assertEqual(parser.links, [])
+
+    def test_refuses_private_target_by_default(self):
+        cli._ALLOW_PRIVATE_TARGETS = False
+        renderer = self._renderer()
+        try:
+            data, status, _headers, _final = renderer.fetch(f"{self.base}/")
+        finally:
+            renderer.close()
+            cli._ALLOW_PRIVATE_TARGETS = True
+        self.assertIsNone(data)
+        self.assertEqual(status, 0)
 
 
 if __name__ == "__main__":

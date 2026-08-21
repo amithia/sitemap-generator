@@ -146,6 +146,31 @@ python3 crawl_sitemap.py https://example.com --diff-against snapshot.json --json
 The diff (added/removed URLs, unchanged count) is also embedded in
 `--json` output under `"diff"`.
 
+## Rendering JavaScript-heavy sites
+
+`--render-js` fetches pages through a headless Chromium instance instead of
+raw HTTP, so links added to the page by client-side JavaScript are
+discoverable — a plain HTTP fetch only ever sees the server-rendered HTML.
+
+This needs the optional `js` extra, since it's the one thing in this tool
+that isn't standard-library-only:
+
+```bash
+pip install '.[js]'
+playwright install chromium   # one-time download, ~150MB
+
+python3 crawl_sitemap.py https://example.com --render-js
+```
+
+Already have Chrome or Chromium installed? Point at it directly with
+`--chromium-path /path/to/chrome` and skip the download.
+
+A headless browser instance isn't safely shareable across threads, so
+`--render-js` forces `--workers 1` — each page is rendered sequentially,
+which is inherently slower than raw HTTP crawling. `--fresh`'s ETag-based
+caching doesn't apply either, since every page is fully rendered every
+time. Reach for this only for sites that actually need it.
+
 ## Modes
 
 - `auto` (default): use sitemap.xml if it exists, otherwise crawl.
@@ -210,12 +235,6 @@ The crawler does most of this automatically, but the knobs matter:
 4. **Tree rendering.** Discovered URLs are folded into a tree by path
    segment and printed like the Unix `tree` command; `--json`,
    `--markdown`, and `--html` write the same structure to files.
-
-## Roadmap
-
-- Generate a corrected `sitemap.xml` from crawl results
-- Diff two crawls to show what changed over time
-- Optional headless-browser rendering for JavaScript-heavy sites
 
 ## License
 

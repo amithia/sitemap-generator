@@ -431,9 +431,77 @@ class RateLimiter:
             time.sleep(pause)
 
 
+class JSRenderer:
+    """Fetches pages through a headless Chromium instance instead of raw
+    HTTP, so links added to the DOM by client-side JavaScript are
+    discoverable. Requires the `js` extra: `pip install
+    'sitemap-generator[js]'` then `playwright install chromium` (or point
+    `--chromium-path` at an existing Chrome/Chromium binary to skip that
+    download).
+
+    Not thread-safe — a single instance is reused sequentially for a whole
+    crawl, so crawl() forces --workers 1 when this is active. Retry/backoff
+    on failures and ETag-based --fresh caching (both real HTTP concepts)
+    don't apply here: every page is fully rendered, every time.
+    """
+
+    def __init__(self, user_agent: str, executable_path: str | None = None,
+                 wait_ms: int = 1000):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise RuntimeError(
+                "--render-js requires the 'js' extra: pip install "
+                "'sitemap-generator[js]' && playwright install chromium"
+            ) from exc
+        self._wait_ms = wait_ms
+        self._pw = sync_playwright().start()
+        try:
+            launch_kwargs = {"executable_path": executable_path} if executable_path else {}
+            self._browser = self._pw.chromium.launch(**launch_kwargs)
+            self._page = self._browser.new_page(user_agent=user_agent)
+        except Exception:
+            self._pw.stop()
+            raise
+
+    def fetch(self, url: str) -> tuple[bytes | None, int, dict[str, str], str]:
+        """Mirrors fetch()'s return shape (body, status, headers, final_url)
+        so it's a drop-in replacement for crawl()'s worker loop."""
+        if not _ALLOW_PRIVATE_TARGETS and not _is_public_host(
+                urllib.parse.urlsplit(url).hostname or ""):
+            log(f"  ! refusing to render {url}: host resolves to a "
+                "private/internal address (use --allow-private-ips if this "
+                "is intentional)")
+            return None, 0, {}, url
+        try:
+            response = self._page.goto(url, wait_until="load", timeout=self._wait_ms * 20)
+        except Exception as exc:  # noqa: BLE001 — browser navigation fails in many
+            # ways (timeout, DNS, crashed renderer); all mean "skip this page".
+            log(f"  ! render failed: {url} ({exc})")
+            return None, 0, {}, url
+        final_url = self._page.url
+        # The page may have navigated (redirect, JS location change) since the
+        # request was checked above — re-check where it actually landed.
+        if not _ALLOW_PRIVATE_TARGETS and not _is_public_host(
+                urllib.parse.urlsplit(final_url).hostname or ""):
+            log(f"  ! refusing rendered content from {final_url}: resolves "
+                "to a private/internal address")
+            return None, 0, {}, final_url
+        status = response.status if response else 200
+        if status >= 400:
+            return None, status, {}, final_url
+        self._page.wait_for_timeout(self._wait_ms)  # let deferred JS settle
+        return self._page.content().encode("utf-8"), status, {}, final_url
+
+    def close(self) -> None:
+        self._browser.close()
+        self._pw.stop()
+
+
 def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
           max_pages: int, max_depth: int, delay: float, user_agent: str,
-          workers: int = 4, max_duration: float | None = None) -> set[str]:
+          workers: int = 4, max_duration: float | None = None,
+          render_js: bool = False, chromium_path: str | None = None) -> set[str]:
     robots = urllib.robotparser.RobotFileParser()
     robots.set_url(urllib.parse.urljoin(base, "/robots.txt"))
     try:
@@ -448,6 +516,11 @@ def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
     if crawl_delay and crawl_delay > delay:
         log(f"robots.txt asks for Crawl-Delay {crawl_delay}s — using it")
         delay = float(crawl_delay)
+
+    if render_js and workers != 1:
+        log(f"--render-js forces --workers 1 (was {workers}): a headless "
+            "browser instance isn't safely shareable across threads")
+        workers = 1
 
     if not state.queue and not state.found:
         start = normalize(base)
@@ -468,6 +541,20 @@ def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
     start_time = time.monotonic()
 
     def worker() -> None:
+        nonlocal in_flight, consecutive_failures, stop, unchanged
+        # Playwright's sync API is bound to the exact OS thread that creates
+        # it — constructed here (inside the worker thread itself) rather
+        # than by the caller, so it's never handed across threads. Only
+        # one worker ever runs when render_js is set (see above), so this
+        # instantiates exactly one browser.
+        renderer = JSRenderer(user_agent, chromium_path) if render_js else None
+        try:
+            worker_body(renderer)
+        finally:
+            if renderer is not None:
+                renderer.close()
+
+    def worker_body(renderer: JSRenderer | None) -> None:
         nonlocal in_flight, consecutive_failures, stop, unchanged
         while True:
             with work:
@@ -491,13 +578,16 @@ def crawl(base: str, host: str, seeds: set[str], state: CrawlState,
                 cached = state.cache.get(url)
                 in_flight += 1
             limiter.wait()
-            cond = {}
-            if cached:
-                if cached.get("etag"):
-                    cond["If-None-Match"] = cached["etag"]
-                if cached.get("lastmod"):
-                    cond["If-Modified-Since"] = cached["lastmod"]
-            data, status, rheaders, final = fetch(url, user_agent, cond or None)
+            if renderer is not None:
+                data, status, rheaders, final = renderer.fetch(url)
+            else:
+                cond = {}
+                if cached:
+                    if cached.get("etag"):
+                        cond["If-None-Match"] = cached["etag"]
+                    if cached.get("lastmod"):
+                        cond["If-Modified-Since"] = cached["lastmod"]
+                data, status, rheaders, final = fetch(url, user_agent, cond or None)
             final_url = normalize(final) if final else url
             offsite = not same_host(final_url, host)
             links: list[str] = []
@@ -776,7 +866,9 @@ def run_scan(args, base: str, host: str) -> dict:
         state = CrawlState(args.state, fresh=args.fresh)
         crawled = crawl(base, host, seeds, state, args.max_pages, args.max_depth,
                         args.delay, args.user_agent, args.workers,
-                        max_duration=getattr(args, "max_duration", None))
+                        max_duration=getattr(args, "max_duration", None),
+                        render_js=getattr(args, "render_js", False),
+                        chromium_path=getattr(args, "chromium_path", None))
         noindex_urls = state.noindex
         page_links = state.page_links
         urls = crawled if args.mode == "crawl" else urls | crawled
@@ -904,6 +996,15 @@ def main() -> int:
                          "encountered mid-crawl, to avoid SSRF footguns like a "
                          "malicious page redirecting to localhost or a cloud "
                          "metadata endpoint")
+    ap.add_argument("--render-js", action="store_true",
+                    help="fetch pages through a headless Chromium instance instead "
+                         "of raw HTTP, so links added by client-side JavaScript are "
+                         "discoverable; requires the 'js' extra (pip install "
+                         "'sitemap-generator[js]' && playwright install chromium) "
+                         "and forces --workers 1")
+    ap.add_argument("--chromium-path", metavar="PATH",
+                    help="with --render-js: use this Chrome/Chromium executable "
+                         "instead of the one 'playwright install' downloads")
     ap.add_argument("--user-agent", default=DEFAULT_USER_AGENT,
                     help="identify yourself; include a contact email so site admins can "
                          "reach you instead of blocking you")

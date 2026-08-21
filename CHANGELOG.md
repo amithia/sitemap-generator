@@ -24,6 +24,14 @@ tagged or released to PyPI.
   unless `--allow-private-ips` is passed.
 - `--max-duration SECONDS`: an optional wall-clock cap on a crawl, on top of
   the existing `--max-pages`/`--max-depth`.
+- `--sitemap-xml FILE`: writes a standards-compliant `sitemap.xml` from crawl
+  results (`noindex` pages excluded).
+- `--diff-against FILE`: compares this crawl's URLs against a previous
+  `--json` snapshot and reports what was added/removed since then.
+- `--render-js` (optional `js` extra): fetches pages through a headless
+  Chromium instance instead of raw HTTP, so JavaScript-injected links are
+  discoverable. `--chromium-path` points it at an existing Chrome/Chromium
+  install instead of downloading one.
 
 ## [0.1.0] - unreleased
 
